@@ -43,4 +43,14 @@ export const api = {
   runRules: (table: string) => request<any>(`/api/run/${table}`, { method: "POST" }),
   getLatestRun: (table: string) => request<any>(`/api/run/${table}/latest`),
   getRunHistory: (table: string) => request<any>(`/api/run/${table}/history`),
+
+  // Convenience for bulk/whole-DB runs from the Table Explorer: ensures a
+  // table has at least AI-suggested rules before running checks on it.
+  ensureRulesThenRun: async (table: string) => {
+    const existing = await request<{ table: string; rules: any[] }>(`/api/rules/${table}`);
+    if (existing.rules.length === 0) {
+      await request<{ table: string; rules: any[] }>(`/api/rules/${table}/generate`, { method: "POST" });
+    }
+    return request<any>(`/api/run/${table}`, { method: "POST" });
+  },
 };

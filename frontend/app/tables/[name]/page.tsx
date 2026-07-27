@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { api } from "@/lib/api";
 import { Card } from "@/components/Card";
 import { Badge } from "@/components/Badge";
@@ -19,6 +20,7 @@ export default function TableDetailPage({ params }: { params: { name: string } }
 
   const [loadingRules, setLoadingRules] = useState(false);
   const [runningRules, setRunningRules] = useState(false);
+  const [pageLoading, setPageLoading] = useState(true);
   const [nlText, setNlText] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -30,10 +32,18 @@ export default function TableDetailPage({ params }: { params: { name: string } }
       .catch(() => setRun(null));
 
   useEffect(() => {
-    api.getSchema(table).then((r) => setColumns(r.columns)).catch((e) => setError(e.message));
-    api.getSample(table, 10).then((r) => setSample(r.rows)).catch(() => {});
-    refreshRules().catch((e) => setError(e.message));
-    refreshRun();
+    setPageLoading(true);
+    Promise.allSettled([
+      api.getSchema(table).then((r) => setColumns(r.columns)),
+      api.getSample(table, 10).then((r) => setSample(r.rows)),
+      refreshRules(),
+      refreshRun(),
+    ])
+      .then((results) => {
+        const failed = results.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
+        if (failed) setError(failed.reason?.message ?? "Failed to load table data");
+      })
+      .finally(() => setPageLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [table]);
 
@@ -71,8 +81,26 @@ export default function TableDetailPage({ params }: { params: { name: string } }
   }
 
   async function handleDelete(rule: Rule) {
+    const ok = window.confirm(
+      `Delete rule "${rule.expectation_type}" on this table? This cannot be undone.`
+    );
+    if (!ok) return;
     await api.deleteRule(rule.id);
     await refreshRules();
+  }
+
+  async function handleEditSave(ruleId: number, description: string, kwargsText: string) {
+    let kwargs: Record<string, unknown>;
+    try {
+      kwargs = JSON.parse(kwargsText);
+    } catch {
+      setError("Rule config must be valid JSON.");
+      return false;
+    }
+    setError(null);
+    await api.updateRule(ruleId, { description, kwargs });
+    await refreshRules();
+    return true;
   }
 
   async function handleRun() {
@@ -91,6 +119,9 @@ export default function TableDetailPage({ params }: { params: { name: string } }
 
   return (
     <div>
+      <Link href="/" className="mb-3 inline-block text-sm text-blue-600 hover:underline">
+        ← Back to all tables
+      </Link>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold">{table}</h1>
         <button
@@ -120,9 +151,13 @@ export default function TableDetailPage({ params }: { params: { name: string } }
         ))}
       </div>
 
-      {tab === "schema" && <SchemaTab columns={columns} sample={sample} />}
+      {pageLoading && (
+        <Card className="animate-pulse text-sm text-gray-400">Loading table data…</Card>
+      )}
 
-      {tab === "rules" && (
+      {!pageLoading && tab === "schema" && <SchemaTab columns={columns} sample={sample} />}
+
+      {!pageLoading && tab === "rules" && (
         <RulesTab
           rules={rules}
           loading={loadingRules}
@@ -132,10 +167,11 @@ export default function TableDetailPage({ params }: { params: { name: string } }
           onAddNl={handleAddNl}
           onToggle={handleToggle}
           onDelete={handleDelete}
+          onEditSave={handleEditSave}
         />
       )}
 
-      {tab === "results" && <ResultsTab run={run} />}
+      {!pageLoading && tab === "results" && <ResultsTab run={run} />}
     </div>
   );
 }
@@ -213,6 +249,7 @@ function RulesTab({
   onAddNl,
   onToggle,
   onDelete,
+  onEditSave,
 }: {
   rules: Rule[];
   loading: boolean;
@@ -222,6 +259,7 @@ function RulesTab({
   onAddNl: () => void;
   onToggle: (rule: Rule) => void;
   onDelete: (rule: Rule) => void;
+  onEditSave: (ruleId: number, description: string, kwargsText: string) => Promise<boolean>;
 }) {
   const sourceTone: Record<Rule["source"], "blue" | "green" | "gray"> = {
     ai_auto: "blue",
@@ -268,40 +306,131 @@ function RulesTab({
 
       <div className="space-y-3">
         {rules.map((r) => (
-          <Card key={r.id} className={!r.enabled ? "opacity-50" : ""}>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="mb-1 flex items-center gap-2">
-                  <span className="font-mono text-sm">{r.expectation_type}</span>
-                  <Badge tone={sourceTone[r.source]}>{sourceLabel[r.source]}</Badge>
-                </div>
-                {r.description && <p className="mb-1 text-sm text-gray-600">{r.description}</p>}
-                {r.nl_prompt && (
-                  <p className="text-xs italic text-gray-400">Original: &quot;{r.nl_prompt}&quot;</p>
-                )}
-                <pre className="mt-2 overflow-x-auto rounded bg-gray-50 p-2 text-xs text-gray-500">
-                  {JSON.stringify(r.kwargs, null, 2)}
-                </pre>
-              </div>
-              <div className="flex shrink-0 gap-2">
-                <button
-                  onClick={() => onToggle(r)}
-                  className="rounded-md border px-3 py-1 text-xs hover:bg-gray-50"
-                >
-                  {r.enabled ? "Disable" : "Enable"}
-                </button>
-                <button
-                  onClick={() => onDelete(r)}
-                  className="rounded-md border border-red-200 px-3 py-1 text-xs text-red-600 hover:bg-red-50"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          </Card>
+          <RuleCard
+            key={r.id}
+            rule={r}
+            sourceTone={sourceTone}
+            sourceLabel={sourceLabel}
+            onToggle={onToggle}
+            onDelete={onDelete}
+            onEditSave={onEditSave}
+          />
         ))}
       </div>
     </div>
+  );
+}
+
+function RuleCard({
+  rule: r,
+  sourceTone,
+  sourceLabel,
+  onToggle,
+  onDelete,
+  onEditSave,
+}: {
+  rule: Rule;
+  sourceTone: Record<Rule["source"], "blue" | "green" | "gray">;
+  sourceLabel: Record<Rule["source"], string>;
+  onToggle: (rule: Rule) => void;
+  onDelete: (rule: Rule) => void;
+  onEditSave: (ruleId: number, description: string, kwargsText: string) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [description, setDescription] = useState(r.description ?? "");
+  const [kwargsText, setKwargsText] = useState(JSON.stringify(r.kwargs, null, 2));
+
+  function startEdit() {
+    setDescription(r.description ?? "");
+    setKwargsText(JSON.stringify(r.kwargs, null, 2));
+    setEditing(true);
+  }
+
+  async function save() {
+    setSaving(true);
+    const ok = await onEditSave(r.id, description, kwargsText);
+    setSaving(false);
+    if (ok) setEditing(false);
+  }
+
+  return (
+    <Card className={!r.enabled ? "opacity-50" : ""}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1">
+          <div className="mb-1 flex items-center gap-2">
+            <span className="font-mono text-sm">{r.expectation_type}</span>
+            <Badge tone={sourceTone[r.source]}>{sourceLabel[r.source]}</Badge>
+          </div>
+
+          {!editing && (
+            <>
+              {r.description && <p className="mb-1 text-sm text-gray-600">{r.description}</p>}
+              {r.nl_prompt && (
+                <p className="text-xs italic text-gray-400">Original: &quot;{r.nl_prompt}&quot;</p>
+              )}
+              <pre className="mt-2 overflow-x-auto rounded bg-gray-50 p-2 text-xs text-gray-500">
+                {JSON.stringify(r.kwargs, null, 2)}
+              </pre>
+            </>
+          )}
+
+          {editing && (
+            <div className="space-y-2">
+              <input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Description"
+                className="w-full rounded-md border px-2 py-1 text-sm"
+              />
+              <textarea
+                value={kwargsText}
+                onChange={(e) => setKwargsText(e.target.value)}
+                rows={4}
+                className="w-full rounded-md border px-2 py-1 font-mono text-xs"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={save}
+                  disabled={saving}
+                  className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40"
+                >
+                  {saving ? "Saving…" : "Save"}
+                </button>
+                <button
+                  onClick={() => setEditing(false)}
+                  className="rounded-md border px-3 py-1 text-xs hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="flex shrink-0 gap-2">
+          {!editing && (
+            <button
+              onClick={startEdit}
+              className="rounded-md border px-3 py-1 text-xs hover:bg-gray-50"
+            >
+              Edit
+            </button>
+          )}
+          <button
+            onClick={() => onToggle(r)}
+            className="rounded-md border px-3 py-1 text-xs hover:bg-gray-50"
+          >
+            {r.enabled ? "Disable" : "Enable"}
+          </button>
+          <button
+            onClick={() => onDelete(r)}
+            className="rounded-md border border-red-200 px-3 py-1 text-xs text-red-600 hover:bg-red-50"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </Card>
   );
 }
 
