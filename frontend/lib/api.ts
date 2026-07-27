@@ -30,7 +30,10 @@ export const api = {
 
   getRules: (table: string) => request<{ table: string; rules: any[] }>(`/api/rules/${table}`),
   generateRules: (table: string) =>
-    request<{ table: string; rules: any[] }>(`/api/rules/${table}/generate`, { method: "POST" }),
+    request<{ table: string; rules: any[]; added_count?: number; duplicate_count?: number }>(
+      `/api/rules/${table}/generate`,
+      { method: "POST" }
+    ),
   addNlRule: (table: string, text: string) =>
     request<{ table: string; rules: any[] }>(`/api/rules/${table}/nl`, {
       method: "POST",

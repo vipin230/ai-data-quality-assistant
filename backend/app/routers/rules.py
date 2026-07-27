@@ -62,9 +62,14 @@ def generate_rules(table_name: str):
         # LLM timeout / bad JSON / API error - never let this 500 silently
         raise HTTPException(status_code=502, detail=f"AI rule generation failed: {exc}")
     if not suggested:
-        return {"table": table_name, "rules": []}
+        return {"table": table_name, "rules": [], "added_count": 0}
     created = rules_store.add_rules(table_name, suggested, source="ai_auto")
-    return {"table": table_name, "rules": [_serialize(r) for r in created]}
+    return {
+        "table": table_name,
+        "rules": [_serialize(r) for r in created],
+        "added_count": len(created),
+        "duplicate_count": len(suggested) - len(created),
+    }
 
 
 @router.post("/{table_name}/nl")

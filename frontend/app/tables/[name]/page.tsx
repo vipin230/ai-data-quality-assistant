@@ -47,12 +47,20 @@ export default function TableDetailPage({ params }: { params: { name: string } }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [table]);
 
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
+
   async function handleGenerate() {
     setLoadingRules(true);
     setError(null);
+    setInfoMessage(null);
     try {
-      await api.generateRules(table);
+      const res = await api.generateRules(table);
       await refreshRules();
+      if ((res.added_count ?? res.rules.length) === 0) {
+        setInfoMessage("AI didn't find any new rules to add — everything it suggests is already in your rule list.");
+      } else {
+        setInfoMessage(`Added ${res.added_count} new AI-suggested rule(s).`);
+      }
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -64,6 +72,7 @@ export default function TableDetailPage({ params }: { params: { name: string } }
     if (!nlText.trim()) return;
     setLoadingRules(true);
     setError(null);
+    setInfoMessage(null);
     try {
       await api.addNlRule(table, nlText.trim());
       setNlText("");
@@ -135,6 +144,10 @@ export default function TableDetailPage({ params }: { params: { name: string } }
 
       {error && (
         <Card className="mb-4 border-red-200 bg-red-50 text-red-700">{error}</Card>
+      )}
+
+      {infoMessage && (
+        <Card className="mb-4 border-blue-200 bg-blue-50 text-blue-700">{infoMessage}</Card>
       )}
 
       <div className="mb-6 flex gap-2 border-b">
@@ -456,25 +469,59 @@ function ResultsTab({ run }: { run: RunResult | null }) {
 
       <div className="space-y-3">
         {run.results.map((r, i) => (
-          <Card key={i} className={r.success ? "" : "border-red-200 bg-red-50"}>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="mb-1 flex items-center gap-2">
-                  <Badge tone={r.success ? "green" : "red"}>{r.success ? "Pass" : "Fail"}</Badge>
-                  <span className="font-mono text-sm">{r.expectation_type}</span>
-                </div>
-                {r.description && <p className="text-sm text-gray-600">{r.description}</p>}
-                {r.error && <p className="mt-1 text-sm text-red-700">Error: {r.error}</p>}
-                {!r.success && r.result && (
-                  <pre className="mt-2 overflow-x-auto rounded bg-white p-2 text-xs text-gray-600">
-                    {JSON.stringify(r.result, null, 2)}
-                  </pre>
-                )}
-              </div>
-            </div>
-          </Card>
+          <ResultCard key={i} r={r} />
         ))}
       </div>
     </div>
+  );
+}
+
+function ResultCard({ r }: { r: RunResult["results"][number] }) {
+  const [showDetails, setShowDetails] = useState(false);
+
+  // Turn GE's raw result payload into a one-line, plain-English summary so
+  // non-technical users aren't confronted with a JSON blob by default.
+  const inner = (r.result as any)?.result;
+  let plainSummary: string | null = null;
+  if (!r.success && inner) {
+    const count = inner.unexpected_count;
+    const pct = inner.unexpected_percent;
+    const examples: unknown[] = inner.partial_unexpected_list ?? [];
+    if (typeof count === "number") {
+      plainSummary = `${count} value(s) (${pct != null ? pct.toFixed(1) : "?"}%) failed this check`;
+      if (examples.length > 0) {
+        plainSummary += ` — e.g. ${examples.slice(0, 3).map((v) => JSON.stringify(v)).join(", ")}`;
+      }
+    }
+  }
+
+  return (
+    <Card className={r.success ? "" : "border-red-200 bg-red-50"}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1">
+          <div className="mb-1 flex items-center gap-2">
+            <Badge tone={r.success ? "green" : "red"}>{r.success ? "Pass" : "Fail"}</Badge>
+            <span className="font-mono text-sm">{r.expectation_type}</span>
+          </div>
+          {r.description && <p className="text-sm text-gray-600">{r.description}</p>}
+          {r.error && <p className="mt-1 text-sm text-red-700">Error: {r.error}</p>}
+          {plainSummary && <p className="mt-1 text-sm text-red-700">{plainSummary}</p>}
+
+          {r.result && (
+            <button
+              onClick={() => setShowDetails((v) => !v)}
+              className="mt-2 text-xs font-medium text-gray-500 hover:text-gray-700 hover:underline"
+            >
+              {showDetails ? "Hide raw details" : "Show raw details"}
+            </button>
+          )}
+          {showDetails && r.result && (
+            <pre className="mt-2 overflow-x-auto rounded bg-white p-2 text-xs text-gray-600">
+              {JSON.stringify(r.result, null, 2)}
+            </pre>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }
