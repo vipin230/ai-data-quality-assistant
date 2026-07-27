@@ -26,7 +26,17 @@ def get_engine() -> Engine:
         settings = get_settings()
         if not settings.database_url:
             raise RuntimeError("DATABASE_URL is not set. Copy .env.example to .env and fill it in.")
-        _engine = create_engine(settings.database_url, pool_pre_ping=True)
+        # Bounded pool: Supabase's pooler (and most managed Postgres tiers)
+        # cap concurrent connections, so we keep this conservative rather
+        # than defaulting to SQLAlchemy's unbounded QueuePool. pool_recycle
+        # avoids stale connections being handed out after long idle periods.
+        _engine = create_engine(
+            settings.database_url,
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=5,
+            pool_recycle=1800,
+        )
     return _engine
 
 

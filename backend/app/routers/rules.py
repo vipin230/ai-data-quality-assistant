@@ -40,16 +40,26 @@ def _validated_table(table_name: str) -> str:
     return table_name
 
 
-@router.get("/{table_name}")
+@router.get("/{table_name}", summary="List stored rules for a table")
 def get_rules(table_name: str):
+    """Return all AI-generated, natural-language, and manually created rules
+    currently stored for this table (enabled and disabled)."""
     _validated_table(table_name)
     rules = rules_store.list_rules(table_name)
     return {"table": table_name, "rules": [_serialize(r) for r in rules]}
 
 
-@router.post("/{table_name}/generate")
+@router.post("/{table_name}/generate", summary="AI: suggest rules from schema + sample data")
 def generate_rules(table_name: str):
-    """AI: auto-suggest rules from schema + sample data."""
+    """AI: auto-suggest rules from schema + sample data.
+
+    Sends the table's column schema and up to 20 sample rows to the LLM,
+    constrained to a whitelist of supported Great Expectations types.
+    Duplicate suggestions (same expectation_type + kwargs as an existing
+    rule) are silently skipped - response reports `added_count` and
+    `duplicate_count` so the UI can show "N new rules added" instead of
+    appearing to do nothing on repeat clicks.
+    """
     _validated_table(table_name)
     columns = db.get_table_schema(table_name)
     sample_rows = db.get_sample_rows(table_name, limit=20)
@@ -72,9 +82,13 @@ def generate_rules(table_name: str):
     }
 
 
-@router.post("/{table_name}/nl")
+@router.post("/{table_name}/nl", summary="AI: convert plain English into a rule")
 def add_nl_rule(table_name: str, req: NLRuleRequest):
-    """AI: convert a natural-language description into one or more rules."""
+    """AI: convert a natural-language description into one or more rules.
+
+    Example: `{"text": "email should be unique"}` ->
+    `expect_column_values_to_be_unique` on the `email` column.
+    """
     _validated_table(table_name)
     columns = db.get_table_schema(table_name)
     try:
@@ -92,8 +106,10 @@ def add_nl_rule(table_name: str, req: NLRuleRequest):
     return {"table": table_name, "rules": [_serialize(r) for r in created]}
 
 
-@router.post("/{table_name}/manual")
+@router.post("/{table_name}/manual", summary="Add a rule manually (no AI)")
 def add_manual_rule(table_name: str, req: ManualRuleRequest):
+    """Add a hand-crafted rule directly, bypassing the AI layer entirely -
+    still validated against the same expectation-type whitelist."""
     _validated_table(table_name)
     if req.expectation_type not in ai_rules.SUPPORTED_EXPECTATIONS:
         raise HTTPException(status_code=400, detail="Unsupported expectation_type")
@@ -105,16 +121,19 @@ def add_manual_rule(table_name: str, req: ManualRuleRequest):
     return {"table": table_name, "rules": [_serialize(r) for r in created]}
 
 
-@router.patch("/rule/{rule_id}")
+@router.patch("/rule/{rule_id}", summary="Edit an existing rule")
 def update_rule(rule_id: int, req: RuleUpdateRequest):
+    """Edit a rule's kwargs/description/enabled state (e.g. after
+    AI-suggesting a rule, a user tweaks the threshold before running it)."""
     rule = rules_store.update_rule(rule_id, **req.model_dump(exclude_unset=True))
     if rule is None:
         raise HTTPException(status_code=404, detail="Rule not found")
     return _serialize(rule)
 
 
-@router.delete("/rule/{rule_id}")
+@router.delete("/rule/{rule_id}", summary="Delete a rule")
 def delete_rule(rule_id: int):
+    """Permanently remove a rule so it's no longer run for its table."""
     ok = rules_store.delete_rule(rule_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Rule not found")

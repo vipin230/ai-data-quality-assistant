@@ -35,6 +35,8 @@ export type RunSummary = {
   success_count: number;
   failed_count: number;
   rows_evaluated: number;
+  total_row_count?: number | null;
+  sampled?: boolean;
   evaluated_at: string;
 };
 

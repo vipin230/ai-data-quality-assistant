@@ -460,11 +460,20 @@ function ResultsTab({ run }: { run: RunResult | null }) {
           <span className="text-sm text-gray-600">
             {run.summary.success_count}/{run.summary.total_rules} rules passed ·{" "}
             {run.summary.rows_evaluated} rows evaluated
+            {run.summary.sampled && run.summary.total_row_count != null && (
+              <> (sampled out of {run.summary.total_row_count} total rows)</>
+            )}
           </span>
           <span className="text-xs text-gray-400">
             Last run: {new Date(run.run_at).toLocaleString()}
           </span>
         </div>
+        {run.summary.sampled && (
+          <p className="mt-2 text-xs text-yellow-700">
+            ⚠️ This table is larger than the check window, so results are based on a sample, not
+            every row.
+          </p>
+        )}
       </Card>
 
       <div className="space-y-3">
