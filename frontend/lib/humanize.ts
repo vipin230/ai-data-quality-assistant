@@ -19,6 +19,21 @@ const FRIENDLY_NAMES: Record<string, string> = {
   expect_compound_columns_to_be_unique: "Combination of columns must be unique",
 };
 
+// Relative time for "last run 3h ago" labels - lets users tell a fresh
+// result from a stale one at a glance instead of assuming a shown badge is
+// current just because it's there.
+export function timeAgo(isoString: string | null | undefined): string {
+  if (!isoString) return "";
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
 export function humanizeRuleType(expectationType: string): string {
   if (FRIENDLY_NAMES[expectationType]) return FRIENDLY_NAMES[expectationType];
   // Fallback: turn "expect_column_values_to_do_x" into "Column values to do x".
@@ -26,4 +41,14 @@ export function humanizeRuleType(expectationType: string): string {
     .replace(/^expect_/, "")
     .replace(/_/g, " ")
     .replace(/^./, (c) => c.toUpperCase());
+}
+
+// Kwargs keys we know how to render as plain form fields instead of raw
+// JSON. Anything outside this set falls back to the JSON editor, but this
+// covers the common AI-suggested shapes (allowed list, range, pattern,
+// failure threshold) so most users never see JSON at all.
+const FRIENDLY_KWARG_KEYS = new Set(["column", "value_set", "min_value", "max_value", "regex", "mostly"]);
+
+export function isFriendlyEditable(kwargs: Record<string, unknown>): boolean {
+  return Object.keys(kwargs).every((k) => FRIENDLY_KWARG_KEYS.has(k));
 }

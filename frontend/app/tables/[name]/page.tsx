@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { Card } from "@/components/Card";
 import { Badge } from "@/components/Badge";
-import { humanizeRuleType } from "@/lib/humanize";
+import { humanizeRuleType, isFriendlyEditable } from "@/lib/humanize";
 import type { ColumnInfo, Rule, RunResult } from "@/lib/types";
 
 type Tab = "schema" | "rules" | "results";
@@ -15,7 +15,7 @@ export default function TableDetailPage({ params }: { params: { name: string } }
   const table = decodeURIComponent(params.name);
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialTab = (searchParams.get("tab") as Tab) || "rules";
+  const initialTab = (searchParams.get("tab") as Tab) || "schema";
   const [tab, setTabState] = useState<Tab>(initialTab);
 
   // Keep the current tab reflected in the URL (?tab=...) so the header's
@@ -134,8 +134,11 @@ export default function TableDetailPage({ params }: { params: { name: string } }
     setError(null);
     setInfoMessage(null);
     try {
-      await api.addNlRule(table, nlText.trim());
+      const res = await api.addNlRule(table, nlText.trim());
       setNlText("");
+      setInfoMessage(
+        `Added ${res.rules.length} rule${res.rules.length === 1 ? "" : "s"} from that description.`
+      );
       await refreshRules();
     } catch (e: any) {
       setError(e.message);
@@ -201,9 +204,14 @@ export default function TableDetailPage({ params }: { params: { name: string } }
     }
     setError(null);
     setInfoMessage(null);
-    await api.updateRule(ruleId, { description, kwargs });
-    await refreshRules();
-    return true;
+    try {
+      await api.updateRule(ruleId, { description, kwargs });
+      await refreshRules();
+      return true;
+    } catch (e: any) {
+      setError(e.message);
+      return false;
+    }
   }
 
   async function handleRun() {
@@ -229,9 +237,6 @@ export default function TableDetailPage({ params }: { params: { name: string } }
 
   return (
     <div>
-      <Link href="/" className="mb-3 inline-flex items-center gap-1 text-sm text-blue-600 hover:underline">
-        <span aria-hidden>←</span> Back to all tables
-      </Link>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">{table}</h1>
@@ -500,7 +505,10 @@ function RulesTab({
                   onChange={() => onToggleSuggestion(i)}
                 />
                 <div>
-                  <div className="font-medium text-slate-800">{humanizeRuleType(s.expectation_type)}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-slate-800">{humanizeRuleType(s.expectation_type)}</span>
+                    {s.kwargs?.column ? <Badge tone="blue">{String(s.kwargs.column)}</Badge> : null}
+                  </div>
                   {s.description && <div className="text-slate-600">{s.description}</div>}
                   {s.already_exists && <Badge tone="gray">Already in your rule list</Badge>}
                 </div>
@@ -601,15 +609,60 @@ function RuleCard({
   const [description, setDescription] = useState(r.description ?? "");
   const [kwargsText, setKwargsText] = useState(JSON.stringify(r.kwargs, null, 2));
 
+  // Friendly form state, only used when isFriendlyEditable(r.kwargs) is
+  // true - value_set as a comma-separated list, min/max/regex as plain
+  // fields. Falls back to raw JSON for any rule shape we don't recognize
+  // (rare - only unusual AI/manual kwargs combos hit this).
+  const friendly = isFriendlyEditable(r.kwargs);
+  const [valueSetText, setValueSetText] = useState(
+    Array.isArray((r.kwargs as any).value_set) ? (r.kwargs as any).value_set.join(", ") : ""
+  );
+  const [minValue, setMinValue] = useState(String((r.kwargs as any).min_value ?? ""));
+  const [maxValue, setMaxValue] = useState(String((r.kwargs as any).max_value ?? ""));
+  const [regex, setRegex] = useState(String((r.kwargs as any).regex ?? ""));
+  const [useJsonEditor, setUseJsonEditor] = useState(false);
+
   function startEdit() {
     setDescription(r.description ?? "");
     setKwargsText(JSON.stringify(r.kwargs, null, 2));
+    setValueSetText(Array.isArray((r.kwargs as any).value_set) ? (r.kwargs as any).value_set.join(", ") : "");
+    setMinValue(String((r.kwargs as any).min_value ?? ""));
+    setMaxValue(String((r.kwargs as any).max_value ?? ""));
+    setRegex(String((r.kwargs as any).regex ?? ""));
+    setUseJsonEditor(false);
     setEditing(true);
+  }
+
+  // Parses a comma-separated allowed-list back into typed values (true/false/
+  // numbers stay typed, everything else stays a string) so "true, false"
+  // round-trips to booleans rather than the literal strings "true"/"false".
+  function parseValueSet(text: string): unknown[] {
+    return text
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+      .map((s) => {
+        if (s === "true") return true;
+        if (s === "false") return false;
+        if (s === "null") return null;
+        if (!Number.isNaN(Number(s)) && s !== "") return Number(s);
+        return s;
+      });
   }
 
   async function save() {
     setSaving(true);
-    const ok = await onEditSave(r.id, description, kwargsText);
+    let text = kwargsText;
+    if (friendly && !useJsonEditor) {
+      const built: Record<string, unknown> = { column: (r.kwargs as any).column };
+      if ("value_set" in r.kwargs) built.value_set = parseValueSet(valueSetText);
+      if ("min_value" in r.kwargs) built.min_value = minValue === "" ? null : Number(minValue);
+      if ("max_value" in r.kwargs) built.max_value = maxValue === "" ? null : Number(maxValue);
+      if ("regex" in r.kwargs) built.regex = regex;
+      if ("mostly" in r.kwargs) built.mostly = (r.kwargs as any).mostly;
+      text = JSON.stringify(built);
+    }
+    const ok = await onEditSave(r.id, description, text);
     setSaving(false);
     if (ok) setEditing(false);
   }
@@ -627,6 +680,7 @@ function RuleCard({
         <div className="flex-1">
           <div className="mb-1 flex flex-wrap items-center gap-2">
             <span className="font-medium text-slate-800">{humanizeRuleType(r.expectation_type)}</span>
+            {r.kwargs?.column ? <Badge tone="blue">{String(r.kwargs.column)}</Badge> : null}
             <Badge tone={sourceTone[r.source]}>{sourceLabel[r.source]}</Badge>
             {!r.enabled && <Badge tone="gray">Disabled</Badge>}
           </div>
@@ -655,24 +709,99 @@ function RuleCard({
           )}
 
           {editing && (
-            <div className="space-y-2">
+            <div className="space-y-3">
+              {typeof (r.kwargs as any).column === "string" && (
+                <p className="text-xs text-slate-400">
+                  Column: <span className="font-mono text-slate-600">{(r.kwargs as any).column}</span>
+                </p>
+              )}
               <input
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Description"
                 className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
-              <div>
-                <p className="mb-1 text-xs font-medium text-slate-500">
-                  Rule settings (advanced, JSON format)
-                </p>
-                <textarea
-                  value={kwargsText}
-                  onChange={(e) => setKwargsText(e.target.value)}
-                  rows={4}
-                  className="w-full rounded-md border border-slate-200 px-2 py-1.5 font-mono text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
+
+              {friendly && !useJsonEditor && (
+                <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-2.5">
+                  {"value_set" in r.kwargs && (
+                    <label className="block text-xs">
+                      <span className="mb-1 block font-medium text-slate-600">Allowed values (comma-separated)</span>
+                      <input
+                        value={valueSetText}
+                        onChange={(e) => setValueSetText(e.target.value)}
+                        placeholder="e.g. true, false  or  bronze, silver, gold"
+                        className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </label>
+                  )}
+                  {("min_value" in r.kwargs || "max_value" in r.kwargs) && (
+                    <div className="flex gap-2">
+                      {"min_value" in r.kwargs && (
+                        <label className="block flex-1 text-xs">
+                          <span className="mb-1 block font-medium text-slate-600">Minimum</span>
+                          <input
+                            type="number"
+                            value={minValue}
+                            onChange={(e) => setMinValue(e.target.value)}
+                            className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        </label>
+                      )}
+                      {"max_value" in r.kwargs && (
+                        <label className="block flex-1 text-xs">
+                          <span className="mb-1 block font-medium text-slate-600">Maximum</span>
+                          <input
+                            type="number"
+                            value={maxValue}
+                            onChange={(e) => setMaxValue(e.target.value)}
+                            className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        </label>
+                      )}
+                    </div>
+                  )}
+                  {"regex" in r.kwargs && (
+                    <label className="block text-xs">
+                      <span className="mb-1 block font-medium text-slate-600">Pattern (regex)</span>
+                      <input
+                        value={regex}
+                        onChange={(e) => setRegex(e.target.value)}
+                        className="w-full rounded-md border border-slate-200 px-2 py-1.5 font-mono text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </label>
+                  )}
+                  <button
+                    onClick={() => setUseJsonEditor(true)}
+                    className="text-xs text-slate-400 hover:text-slate-600 hover:underline"
+                  >
+                    Edit raw JSON instead
+                  </button>
+                </div>
+              )}
+
+              {(!friendly || useJsonEditor) && (
+                <div>
+                  <p className="mb-1 text-xs font-medium text-slate-500">
+                    Rule settings (advanced, JSON format)
+                  </p>
+                  <textarea
+                    value={kwargsText}
+                    onChange={(e) => setKwargsText(e.target.value)}
+                    rows={4}
+                    className="w-full rounded-md border border-slate-200 px-2 py-1.5 font-mono text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  {friendly && (
+                    <button
+                      onClick={() => setUseJsonEditor(false)}
+                      className="mt-1 text-xs text-slate-400 hover:text-slate-600 hover:underline"
+                    >
+                      Back to simple editor
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div className="flex gap-2">
                 <button
                   onClick={save}
@@ -810,6 +939,7 @@ function ResultCard({ r }: { r: RunResult["results"][number] }) {
           <div className="mb-1 flex flex-wrap items-center gap-2">
             <Badge tone={r.success ? "green" : "red"}>{r.success ? "Pass" : "Fail"}</Badge>
             <span className="font-medium text-slate-800">{humanizeRuleType(r.expectation_type)}</span>
+            {r.kwargs?.column ? <Badge tone="blue">{String(r.kwargs.column)}</Badge> : null}
           </div>
           {r.description && <p className="text-sm text-slate-600">{r.description}</p>}
           {r.error && <p className="mt-1 text-sm text-rose-700">Error: {r.error}</p>}

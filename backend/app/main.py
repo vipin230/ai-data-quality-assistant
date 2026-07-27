@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.logging_config import configure_logging, get_logger
 from app.routers import rules, run, tables
-from app.services.store import init_schema
+from app.services.store import init_schema, reset_state
 
 configure_logging()
 logger = get_logger(__name__)
@@ -27,7 +27,8 @@ def on_startup():
     # if they don't exist yet. No-ops safely if already present.
     try:
         init_schema()
-        logger.info("dq_assistant schema initialized")
+        reset_state()
+        logger.info("dq_assistant schema initialized (clean slate)")
     except Exception as exc:  # pragma: no cover - surfaced via logs, app still boots
         logger.warning("Skipping schema init (DB not reachable yet): %s", exc)
 

@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { Card } from "@/components/Card";
 import { Badge } from "@/components/Badge";
 import type { TableInfo } from "@/lib/types";
+import { timeAgo } from "@/lib/humanize";
 
 type RunStatus = "idle" | "running" | "done" | "error";
 
@@ -21,7 +22,39 @@ export default function HomePage() {
   useEffect(() => {
     api
       .listTables()
-      .then((res) => setTables(res.tables))
+      .then(async (res) => {
+        setTables(res.tables);
+        // Hydrate each table's last-known result from the backend (results
+        // are persisted server-side) so switching pages/tables doesn't wipe
+        // out what was already run - only in-flight "Checking..." state is
+        // ever lost on navigation, not completed results.
+        const entries = await Promise.all(
+          res.tables.map(async (t) => {
+            try {
+              const latest = await api.getLatestRun(t.name);
+              if (!latest?.summary) return null;
+              return [
+                t.name,
+                {
+                  status: "done" as const,
+                  message: `${latest.summary.success_count}/${latest.summary.total_rules} rules passed · ${timeAgo(
+                    latest.run_at
+                  )}`,
+                },
+              ] as const;
+            } catch {
+              return null;
+            }
+          })
+        );
+        setStatuses((prev) => {
+          const next = { ...prev };
+          for (const entry of entries) {
+            if (entry) next[entry[0]] = entry[1];
+          }
+          return next;
+        });
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, []);
@@ -163,13 +196,13 @@ export default function HomePage() {
               {status && (
                 <div className="mb-3 text-xs">
                   {status.status === "running" && <Badge tone="yellow">⏳ Checking…</Badge>}
-                  {status.status === "done" && <Badge tone="green">✅ {status.message}</Badge>}
+                  {status.status === "done" && <Badge tone="green">✅ Last run: {status.message}</Badge>}
                   {status.status === "error" && <Badge tone="red">⚠️ Failed: {status.message}</Badge>}
                 </div>
               )}
 
               <Link
-                href={`/tables/${t.name}`}
+                href={`/tables/${encodeURIComponent(t.name)}`}
                 className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline"
               >
                 Open table <span aria-hidden>→</span>

@@ -24,18 +24,20 @@ def list_rules(table_name: str) -> list[Rule]:
 def add_rules(table_name: str, rules: list[dict], source: str, nl_prompt: str | None = None) -> list[Rule]:
     """rules: list of {"expectation_type": str, "kwargs": dict, "description": str}
 
-    Skips any rule that's an exact duplicate (same expectation_type + kwargs)
-    of an already-stored rule for this table, so re-clicking "Suggest rules
-    with AI" or re-submitting the same NL text doesn't pile up duplicates.
+    Skips any rule that duplicates the same check (expectation_type + column)
+    already stored for this table, so re-clicking "Suggest rules with AI" or
+    re-submitting NL text doesn't pile up near-duplicates that only differ in
+    wording (e.g. two slightly different email regexes are still the same
+    "email must match a pattern" check).
     """
     suite = get_or_create_suite(table_name)
     with get_session() as session:
         existing = session.query(Rule).filter_by(suite_id=suite.id).all()
-        existing_keys = {(e.expectation_type, _kwargs_key(e.kwargs)) for e in existing}
+        existing_keys = {(e.expectation_type, _dedupe_key(e.kwargs)) for e in existing}
 
         created = []
         for r in rules:
-            key = (r["expectation_type"], _kwargs_key(r.get("kwargs", {})))
+            key = (r["expectation_type"], _dedupe_key(r.get("kwargs", {})))
             if key in existing_keys:
                 continue
             rule = Rule(
@@ -62,19 +64,43 @@ def dedupe_against_existing(table_name: str, rules: list[dict]) -> list[dict]:
     suite = get_or_create_suite(table_name)
     with get_session() as session:
         existing = session.query(Rule).filter_by(suite_id=suite.id).all()
-        existing_keys = {(e.expectation_type, _kwargs_key(e.kwargs)) for e in existing}
+        existing_keys = {(e.expectation_type, _dedupe_key(e.kwargs)) for e in existing}
 
     annotated = []
     for r in rules:
-        key = (r["expectation_type"], _kwargs_key(r.get("kwargs", {})))
+        key = (r["expectation_type"], _dedupe_key(r.get("kwargs", {})))
         annotated.append({**r, "already_exists": key in existing_keys})
     return annotated
+
+
+def _dedupe_key(kwargs: dict) -> str:
+    """Same expectation_type + same column = same check, regardless of minor
+    kwargs differences (e.g. two regexes that both mean "looks like an
+    email"). expect_table_row_count_to_be_between has no column, so fall
+    back to the full kwargs for that one case."""
+    column = kwargs.get("column")
+    if column is not None:
+        return str(column)
+    return _kwargs_key(kwargs)
 
 
 def _kwargs_key(kwargs: dict) -> str:
     import json
 
     return json.dumps(kwargs, sort_keys=True, default=str)
+
+
+def get_rule_with_table(rule_id: int):
+    """Fetch a rule plus its table name in one query (avoids a lazy-load on
+    the closed session when the caller only needs table_name for validation)."""
+    with get_session() as session:
+        row = (
+            session.query(Rule, RuleSuite.table_name)
+            .join(RuleSuite, Rule.suite_id == RuleSuite.id)
+            .filter(Rule.id == rule_id)
+            .one_or_none()
+        )
+        return row
 
 
 def update_rule(rule_id: int, **fields) -> Rule | None:

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import "./globals.css";
 import { HeaderLogo, HeaderSteps } from "@/components/Header";
+import { Sidebar } from "@/components/Sidebar";
 
 export const metadata: Metadata = {
   title: "Data Quality Assistant",
@@ -21,7 +22,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </Suspense>
           </div>
         </header>
-        <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
+        <div className="mx-auto flex max-w-6xl">
+          <Sidebar />
+          <main className="min-w-0 flex-1 px-6 py-8">{children}</main>
+        </div>
         <footer className="mx-auto max-w-6xl px-6 pb-10 pt-2 text-center text-xs text-slate-400">
           Not sure where to start? Open any table and click{" "}
           <span className="font-medium text-slate-500">“✨ Suggest rules with AI.”</span>

@@ -128,6 +128,9 @@ def add_manual_rule(table_name: str, req: ManualRuleRequest):
     _validated_table(table_name)
     if req.expectation_type not in ai_rules.SUPPORTED_EXPECTATIONS:
         raise HTTPException(status_code=400, detail="Unsupported expectation_type")
+    err = ai_rules.validate_kwargs_for_table(req.expectation_type, req.kwargs, db.get_table_schema(table_name))
+    if err:
+        raise HTTPException(status_code=422, detail=err)
     created = rules_store.add_rules(
         table_name,
         [{"expectation_type": req.expectation_type, "kwargs": req.kwargs, "description": req.description}],
@@ -139,7 +142,20 @@ def add_manual_rule(table_name: str, req: ManualRuleRequest):
 @router.patch("/rule/{rule_id}", summary="Edit an existing rule")
 def update_rule(rule_id: int, req: RuleUpdateRequest):
     """Edit a rule's kwargs/description/enabled state (e.g. after
-    AI-suggesting a rule, a user tweaks the threshold before running it)."""
+    AI-suggesting a rule, a user tweaks the threshold before running it).
+
+    Validates edited kwargs the same way AI-generated and manual rules are
+    validated, so a bad edit (wrong column, empty allowed-list, invalid
+    regex) is rejected instead of silently saved.
+    """
+    if req.kwargs is not None:
+        existing = rules_store.get_rule_with_table(rule_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Rule not found")
+        rule, table_name = existing
+        err = ai_rules.validate_kwargs_for_table(rule.expectation_type, req.kwargs, db.get_table_schema(table_name))
+        if err:
+            raise HTTPException(status_code=422, detail=err)
     rule = rules_store.update_rule(rule_id, **req.model_dump(exclude_unset=True))
     if rule is None:
         raise HTTPException(status_code=404, detail="Rule not found")

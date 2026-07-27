@@ -42,7 +42,15 @@ Rules:
 - "kwargs" must always include "column" (except for expect_table_row_count_to_be_between).
 - Only suggest rules that are clearly justified by the column name, data type, or sample values shown.
 - Do not invent columns that are not in the schema.
-- Prefer a small number of high-confidence rules over many speculative ones.
+- Prefer a small number of high-confidence rules over many speculative ones,
+  but this is about avoiding unrelated guesses, NOT about merging or dropping
+  distinct conditions the user explicitly stated. If the user's text names
+  multiple separate conditions (e.g. joined by "and", commas, or separate
+  sentences, possibly on different columns), you MUST return one rule per
+  stated condition, not just the one you find most confident.
+- "email should not be empty" means the column must have a real value: use
+  expect_column_value_lengths_to_be_between (min_value=1) or a regex rule,
+  NOT expect_column_values_to_not_be_null (which only catches NULL, not "").
 - Output ONLY the JSON object, no prose, no markdown fences.
 """
 
@@ -110,6 +118,39 @@ def _validate_rules(raw_rules: list[dict]) -> list[dict]:
             }
         )
     return clean
+
+
+def validate_kwargs_for_table(expectation_type: str, kwargs: dict, columns: list[dict]) -> str | None:
+    """Structural sanity check reused by manual-add and rule-edit endpoints
+    (AI-generated rules already go through `_validate_rules`). Returns an
+    error message, or None if the kwargs look sane for this table/column.
+
+    ponytail: shape/column checks only, not full GE-schema validation -
+    upgrade to GE's own expectation config validation if bad edits keep
+    slipping past this.
+    """
+    if not isinstance(kwargs, dict):
+        return "kwargs must be an object"
+    column_names = {c["column_name"] for c in columns}
+    if expectation_type != "expect_table_row_count_to_be_between":
+        column = kwargs.get("column")
+        if not column:
+            return "kwargs.column is required"
+        if column not in column_names:
+            return f"Column {column!r} does not exist on this table"
+    if "value_set" in kwargs and (not isinstance(kwargs["value_set"], list) or len(kwargs["value_set"]) == 0):
+        return "value_set must be a non-empty list"
+    for key in ("min_value", "max_value"):
+        if key in kwargs and kwargs[key] is not None and not isinstance(kwargs[key], (int, float)):
+            return f"{key} must be a number"
+    if "regex" in kwargs and kwargs["regex"]:
+        import re
+
+        try:
+            re.compile(kwargs["regex"])
+        except re.error as exc:
+            return f"Invalid regex: {exc}"
+    return None
 
 
 def generate_rules_from_schema(table_name: str, columns: list[dict], sample_rows: list[dict]) -> list[dict]:
