@@ -4,4 +4,23 @@
 
 html, body {
   height: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* Subtle progress bar used for pass-rate summaries */
+.progress-track {
+  width: 100%;
+  height: 0.625rem;
+  border-radius: 9999px;
+  background-color: #e5e7eb;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.4s ease;
 }

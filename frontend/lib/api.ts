@@ -29,10 +29,12 @@ export const api = {
     request<{ table: string; rows: Record<string, unknown>[] }>(`/api/tables/${table}/sample?limit=${limit}`),
 
   getRules: (table: string) => request<{ table: string; rules: any[] }>(`/api/rules/${table}`),
-  generateRules: (table: string) =>
-    request<{ table: string; rules: any[]; added_count?: number; duplicate_count?: number }>(
-      `/api/rules/${table}/generate`,
-      { method: "POST" }
+  suggestRules: (table: string) =>
+    request<{ table: string; suggestions: any[] }>(`/api/rules/${table}/generate`, { method: "POST" }),
+  acceptRules: (table: string, rules: any[]) =>
+    request<{ table: string; rules: any[]; added_count: number; duplicate_count: number }>(
+      `/api/rules/${table}/accept`,
+      { method: "POST", body: JSON.stringify({ rules }) }
     ),
   addNlRule: (table: string, text: string) =>
     request<{ table: string; rules: any[] }>(`/api/rules/${table}/nl`, {
@@ -49,10 +51,22 @@ export const api = {
 
   // Convenience for bulk/whole-DB runs from the Table Explorer: ensures a
   // table has at least AI-suggested rules before running checks on it.
+  // Unlike the interactive "Suggest rules with AI" flow (which previews and
+  // asks for confirmation), this auto-accepts all suggestions - it only
+  // triggers for tables that have zero rules, so there's nothing to
+  // conflict with or silently duplicate.
   ensureRulesThenRun: async (table: string) => {
     const existing = await request<{ table: string; rules: any[] }>(`/api/rules/${table}`);
     if (existing.rules.length === 0) {
-      await request<{ table: string; rules: any[] }>(`/api/rules/${table}/generate`, { method: "POST" });
+      const preview = await request<{ table: string; suggestions: any[] }>(`/api/rules/${table}/generate`, {
+        method: "POST",
+      });
+      if (preview.suggestions.length > 0) {
+        await request<any>(`/api/rules/${table}/accept`, {
+          method: "POST",
+          body: JSON.stringify({ rules: preview.suggestions }),
+        });
+      }
     }
     return request<any>(`/api/run/${table}`, { method: "POST" });
   },

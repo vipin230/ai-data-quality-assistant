@@ -16,6 +16,10 @@ class ManualRuleRequest(BaseModel):
     description: str | None = None
 
 
+class AcceptRulesRequest(BaseModel):
+    rules: list[ManualRuleRequest]
+
+
 class RuleUpdateRequest(BaseModel):
     kwargs: dict | None = None
     description: str | None = None
@@ -49,16 +53,16 @@ def get_rules(table_name: str):
     return {"table": table_name, "rules": [_serialize(r) for r in rules]}
 
 
-@router.post("/{table_name}/generate", summary="AI: suggest rules from schema + sample data")
+@router.post("/{table_name}/generate", summary="AI: suggest rules from schema + sample data (preview only)")
 def generate_rules(table_name: str):
-    """AI: auto-suggest rules from schema + sample data.
+    """AI: suggest rules from schema + sample data - preview only, nothing is
+    stored yet.
 
     Sends the table's column schema and up to 20 sample rows to the LLM,
-    constrained to a whitelist of supported Great Expectations types.
-    Duplicate suggestions (same expectation_type + kwargs as an existing
-    rule) are silently skipped - response reports `added_count` and
-    `duplicate_count` so the UI can show "N new rules added" instead of
-    appearing to do nothing on repeat clicks.
+    constrained to a whitelist of supported Great Expectations types. Each
+    suggestion is annotated with `already_exists` (true if an identical rule
+    is already stored for this table) so the UI can pre-uncheck it. The user
+    picks which suggestions to keep and confirms via `POST /{table}/accept`.
     """
     _validated_table(table_name)
     columns = db.get_table_schema(table_name)
@@ -71,14 +75,25 @@ def generate_rules(table_name: str):
     except Exception as exc:
         # LLM timeout / bad JSON / API error - never let this 500 silently
         raise HTTPException(status_code=502, detail=f"AI rule generation failed: {exc}")
-    if not suggested:
-        return {"table": table_name, "rules": [], "added_count": 0}
-    created = rules_store.add_rules(table_name, suggested, source="ai_auto")
+    annotated = rules_store.dedupe_against_existing(table_name, suggested)
+    return {"table": table_name, "suggestions": annotated}
+
+
+@router.post("/{table_name}/accept", summary="Add user-selected AI suggestions (or manual rules)")
+def accept_rules(table_name: str, req: AcceptRulesRequest):
+    """Persist a user-approved list of rules for a table - used after the
+    AI-suggestion preview so nothing is added without explicit confirmation."""
+    _validated_table(table_name)
+    to_add = [
+        {"expectation_type": r.expectation_type, "kwargs": r.kwargs, "description": r.description}
+        for r in req.rules
+    ]
+    created = rules_store.add_rules(table_name, to_add, source="ai_auto")
     return {
         "table": table_name,
         "rules": [_serialize(r) for r in created],
         "added_count": len(created),
-        "duplicate_count": len(suggested) - len(created),
+        "duplicate_count": len(to_add) - len(created),
     }
 
 

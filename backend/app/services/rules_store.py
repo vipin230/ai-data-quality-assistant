@@ -55,6 +55,22 @@ def add_rules(table_name: str, rules: list[dict], source: str, nl_prompt: str | 
         return created
 
 
+def dedupe_against_existing(table_name: str, rules: list[dict]) -> list[dict]:
+    """Like `add_rules` but read-only: annotates each suggested rule with
+    `already_exists` instead of inserting anything, so callers can preview
+    AI suggestions before the user decides which ones to accept."""
+    suite = get_or_create_suite(table_name)
+    with get_session() as session:
+        existing = session.query(Rule).filter_by(suite_id=suite.id).all()
+        existing_keys = {(e.expectation_type, _kwargs_key(e.kwargs)) for e in existing}
+
+    annotated = []
+    for r in rules:
+        key = (r["expectation_type"], _kwargs_key(r.get("kwargs", {})))
+        annotated.append({**r, "already_exists": key in existing_keys})
+    return annotated
+
+
 def _kwargs_key(kwargs: dict) -> str:
     import json
 

@@ -24,7 +24,8 @@ kept separate from the user's own tables.
 ## Architecture
 
 ```
-frontend/   Next.js (App Router, TS, Tailwind) — Table Explorer, Rule Management, Results Dashboard
+frontend/   Next.js (App Router, TS, Tailwind) — Table Explorer, Rule 
+Management, Results Dashboard
 backend/    FastAPI (Python 3.12)
   app/services/db.py        -> introspects the user's Postgres tables (read-only, pooled connections, 30s TTL table-list cache)
   app/services/ai_rules.py  -> LLM prompt engineering: schema/sample -> GE rules, NL -> GE rules

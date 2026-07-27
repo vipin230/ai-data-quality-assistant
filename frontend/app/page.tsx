@@ -73,37 +73,49 @@ export default function HomePage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-2xl font-semibold">Table Explorer</h1>
-      <p className="mb-6 text-sm text-gray-500">
-        Select a table to open its schema, AI-suggested rules, and results — or select multiple
-        tables (or the whole database) below to run quality checks in bulk.
+      <h1 className="mb-1 text-2xl font-semibold text-slate-900">Your tables</h1>
+      <p className="mb-6 max-w-2xl text-sm text-slate-500">
+        Pick a table below to review its data and quality rules, or run a quick check on several
+        tables at once. No coding needed — the AI will suggest sensible rules for you.
       </p>
 
-      {loading && <p className="text-gray-500">Loading tables…</p>}
+      {loading && (
+        <Card className="flex items-center gap-3 text-sm text-slate-500">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600" />
+          Loading your tables…
+        </Card>
+      )}
 
       {error && (
-        <Card className="border-red-200 bg-red-50 text-red-700">
-          Couldn&apos;t reach the backend API: {error}. Make sure the FastAPI server is running and
-          DATABASE_URL is configured in backend/.env.
+        <Card className="border-rose-200 bg-rose-50 text-rose-700">
+          <p className="font-medium">We couldn&apos;t connect to the server.</p>
+          <p className="mt-1 text-sm">
+            {error}. Please check with your administrator that the app&apos;s backend service is
+            running.
+          </p>
         </Card>
       )}
 
       {!loading && !error && tables.length === 0 && (
-        <Card>No tables found in the connected database&apos;s public schema.</Card>
+        <Card className="text-center text-slate-500">
+          <p className="text-3xl">📭</p>
+          <p className="mt-2 font-medium">No tables found</p>
+          <p className="mt-1 text-sm">There don&apos;t seem to be any tables in the connected database yet.</p>
+        </Card>
       )}
 
       {!loading && !error && tables.length > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
+        <div className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
           <button
             onClick={selectAll}
-            className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-gray-50"
+            className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
           >
             Select all ({tables.length})
           </button>
           <button
             onClick={clearSelection}
             disabled={selected.size === 0}
-            className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-gray-50 disabled:opacity-40"
+            className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40"
           >
             Clear selection
           </button>
@@ -111,16 +123,16 @@ export default function HomePage() {
           <button
             onClick={() => runOnTables(Array.from(selected))}
             disabled={selected.size === 0 || bulkRunning}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40"
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-40"
           >
-            {bulkRunning ? "Running…" : `Run checks on selected (${selected.size})`}
+            {bulkRunning ? "Running…" : `▶ Run checks on selected (${selected.size})`}
           </button>
           <button
             onClick={() => runOnTables(tables.map((t) => t.name))}
             disabled={bulkRunning}
-            className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-40"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800 disabled:opacity-40"
           >
-            {bulkRunning ? "Running…" : "Run checks on entire database"}
+            {bulkRunning ? "Running…" : "▶ Run checks on everything"}
           </button>
         </div>
       )}
@@ -129,33 +141,38 @@ export default function HomePage() {
         {tables.map((t) => {
           const status = statuses[t.name];
           return (
-            <Card key={t.name} className="h-full">
-              <div className="mb-2 flex items-start justify-between gap-2">
-                <label className="flex items-center gap-2">
+            <Card
+              key={t.name}
+              className={`h-full transition-shadow hover:shadow-md ${
+                selected.has(t.name) ? "ring-2 ring-blue-500" : ""
+              }`}
+            >
+              <div className="mb-3 flex items-start justify-between gap-2">
+                <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={selected.has(t.name)}
                     onChange={() => toggle(t.name)}
-                    className="h-4 w-4"
+                    className="h-4 w-4 rounded accent-blue-600"
                   />
-                  <span className="font-medium">{t.name}</span>
+                  <span className="font-semibold text-slate-800">{t.name}</span>
                 </label>
                 <Badge tone="blue">{t.row_count ?? "?"} rows</Badge>
               </div>
 
               {status && (
-                <div className="mb-2 text-xs">
-                  {status.status === "running" && <Badge tone="yellow">Running…</Badge>}
-                  {status.status === "done" && <Badge tone="green">{status.message}</Badge>}
-                  {status.status === "error" && <Badge tone="red">Failed: {status.message}</Badge>}
+                <div className="mb-3 text-xs">
+                  {status.status === "running" && <Badge tone="yellow">⏳ Checking…</Badge>}
+                  {status.status === "done" && <Badge tone="green">✅ {status.message}</Badge>}
+                  {status.status === "error" && <Badge tone="red">⚠️ Failed: {status.message}</Badge>}
                 </div>
               )}
 
               <Link
                 href={`/tables/${t.name}`}
-                className="text-sm font-medium text-blue-600 hover:underline"
+                className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline"
               >
-                Open table →
+                Open table <span aria-hidden>→</span>
               </Link>
             </Card>
           );
